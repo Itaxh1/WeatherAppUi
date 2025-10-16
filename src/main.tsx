@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import WeatherApp from './WeatherApp.tsx'
+import WeatherApp from './components/WeatherApp.tsx'
 import 'bootstrap/dist/css/bootstrap.min.css'
 import './style.css'
 
