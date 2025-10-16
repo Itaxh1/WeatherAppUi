@@ -122,7 +122,7 @@ REACT_APP_WEATHER_API_KEY=your_api_key_here
 weather-dashboard/
 ├── src/
 │   ├── components/
-│   │   └── WeatherApp.jsx       # Main weather component
+│   │   └── WeatherApp.tsx       # Main weather component
 │   ├── App.js                   # Root component
 │   └── index.js                 # Entry point
 ├── public/
@@ -198,11 +198,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Weather data provided by [OpenWeather API](https://openweathermap.org/)
 - Icons by [Lucide React](https://lucide.dev/)
 - Inspired by modern weather applications and nature-themed design
-
-## 📞 Support
-
-If you have any questions or run into issues, please open an issue on GitHub.
-
----
 
 **Note**: This project was created as a technical assessment to demonstrate full-stack development skills, API integration, responsive design, and modern React patterns.
