@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
   Cloud, MapPin, Wind, Droplets, Thermometer, Search,
-  Navigation, Loader, AlertCircle, Eye, Gauge, Sunrise, Sunset
+  Navigation, Loader, AlertCircle, Eye, Gauge, Sunrise, Sunset,
+  Linkedin, Globe
 } from 'lucide-react';
 
-const API_KEY = '1d83c4f40e4a712ab9c57d0db16b1349';
+const API_KEY = import.meta.env.VITE_API_KEY;
 const GEO_URL = 'https://api.openweathermap.org/geo/1.0/direct';
 const WEATHER_URL = 'https://api.openweathermap.org/data/2.5/weather';
 const FORECAST_URL = 'https://api.openweathermap.org/data/2.5/forecast';
@@ -18,6 +19,7 @@ const WeatherApp = () => {
   const [forecastData, setForecastData] = useState([]);
   const [selectedDay, setSelectedDay] = useState(null);
   const [animate, setAnimate] = useState(false);
+  const [searchSuggestions, setSearchSuggestions] = useState([]);
 
   const fetchWeatherByCoords = async (lat, lon, locationName) => {
     try {
@@ -137,11 +139,12 @@ const WeatherApp = () => {
 
     setLoading(true);
     setError('');
+    setSearchSuggestions([]);
 
     try {
       const params = new URLSearchParams({
         q: location.trim(),
-        limit: 1,
+        limit: 5,
         appid: API_KEY
       });
 
@@ -154,15 +157,19 @@ const WeatherApp = () => {
       const data = await response.json();
 
       if (!data || data.length === 0) {
-        throw new Error('Location not found. Please try a different search.');
+        throw new Error('Location not found. Please try a different search term.');
       }
 
-      const { lat, lon, name, country, state } = data[0];
-      const locationName = state 
-        ? `${name}, ${state}, ${country}`
-        : `${name}, ${country}`;
-
-      await fetchWeatherByCoords(lat, lon, locationName);
+      if (data.length === 1) {
+        const { lat, lon, name, country, state } = data[0];
+        const locationName = state 
+          ? `${name}, ${state}, ${country}`
+          : `${name}, ${country}`;
+        await fetchWeatherByCoords(lat, lon, locationName);
+      } else {
+        setSearchSuggestions(data);
+        setLoading(false);
+      }
     } catch (err) {
       setError(err.message || 'Failed to find location');
       setLoading(false);
@@ -197,6 +204,17 @@ const WeatherApp = () => {
     setSelectedDay(day);
     setAnimate(true);
     setTimeout(() => setAnimate(false), 600);
+  };
+
+  const handleSuggestionClick = async (suggestion) => {
+    const { lat, lon, name, country, state } = suggestion;
+    const locationName = state 
+      ? `${name}, ${state}, ${country}`
+      : `${name}, ${country}`;
+    setLocation(locationName);
+    setSearchSuggestions([]);
+    setLoading(true);
+    await fetchWeatherByCoords(lat, lon, locationName);
   };
 
   const formatTime = (timestamp) => {
@@ -283,6 +301,31 @@ const WeatherApp = () => {
           <div className="error-alert">
             <AlertCircle size={20} />
             <span>{error}</span>
+          </div>
+        )}
+
+        {/* Search Suggestions */}
+        {searchSuggestions.length > 0 && !loading && (
+          <div className="suggestions-card">
+            <h3>Multiple locations found. Please select one:</h3>
+            <div className="suggestions-list">
+              {searchSuggestions.map((suggestion, index) => (
+                <div 
+                  key={index}
+                  className="suggestion-item"
+                  onClick={() => handleSuggestionClick(suggestion)}
+                >
+                  <MapPin size={18} className="icon-primary" />
+                  <div className="suggestion-info">
+                    <div className="suggestion-name">
+                      {suggestion.name}
+                      {suggestion.state && `, ${suggestion.state}`}
+                    </div>
+                    <div className="suggestion-country">{suggestion.country}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -407,7 +450,7 @@ const WeatherApp = () => {
         )}
 
         {/* Initial State */}
-        {!currentWeather && !loading && !error && (
+        {!currentWeather && !loading && !error && searchSuggestions.length === 0 && (
           <div className="empty-state">
             <Cloud size={64} className="empty-icon" />
             <h3>Search for a location to get started</h3>
@@ -415,6 +458,35 @@ const WeatherApp = () => {
           </div>
         )}
       </div>
+
+      {/* Footer */}
+      <footer className="footer">
+        <div className="footer-content">
+          <p className="footer-text">
+            Built by <strong>Ashwin Kumar Uma Sankar</strong>
+          </p>
+          <div className="footer-links">
+            <a 
+              href="https://www.ashxinkumar.me/" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="footer-link"
+            >
+              <Globe size={18} />
+              Portfolio
+            </a>
+            <a 
+              href="https://www.linkedin.com/in/ashwinkumar99/" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="footer-link"
+            >
+              <Linkedin size={18} />
+              LinkedIn
+            </a>
+          </div>
+        </div>
+      </footer>
 
       <style>{`
         * {
@@ -795,6 +867,113 @@ const WeatherApp = () => {
         .empty-state p {
           color: #86efac;
           opacity: 0.7;
+        }
+
+        .suggestions-card {
+          background: rgba(26, 61, 46, 0.6);
+          backdrop-filter: blur(10px);
+          border: 1px solid rgba(74, 222, 128, 0.2);
+          border-radius: 1rem;
+          padding: 1.5rem;
+          margin-bottom: 2rem;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .suggestions-card h3 {
+          color: #4ade80;
+          font-size: 1rem;
+          margin-bottom: 1rem;
+        }
+
+        .suggestions-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .suggestion-item {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 1rem;
+          background: rgba(10, 31, 15, 0.5);
+          border: 1px solid rgba(74, 222, 128, 0.2);
+          border-radius: 0.5rem;
+          cursor: pointer;
+          transition: all 0.3s ease;
+        }
+
+        .suggestion-item:hover {
+          background: rgba(10, 31, 15, 0.7);
+          border-color: rgba(74, 222, 128, 0.4);
+          transform: translateX(4px);
+        }
+
+        .suggestion-info {
+          flex: 1;
+        }
+
+        .suggestion-name {
+          color: #e8f5e9;
+          font-weight: 500;
+          margin-bottom: 0.25rem;
+        }
+
+        .suggestion-country {
+          color: #86efac;
+          font-size: 0.875rem;
+          opacity: 0.8;
+        }
+
+        .footer {
+          margin-top: 4rem;
+          padding-top: 2rem;
+          border-top: 1px solid rgba(74, 222, 128, 0.2);
+        }
+
+        .footer-content {
+          max-width: 900px;
+          margin: 0 auto;
+          text-align: center;
+        }
+
+        .footer-text {
+          color: #86efac;
+          margin-bottom: 1rem;
+          font-size: 0.875rem;
+        }
+
+        .footer-text strong {
+          color: #4ade80;
+        }
+
+        .footer-links {
+          display: flex;
+          justify-content: center;
+          gap: 1.5rem;
+          flex-wrap: wrap;
+        }
+
+        .footer-link {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.5rem 1rem;
+          background: rgba(74, 222, 128, 0.1);
+          border: 1px solid rgba(74, 222, 128, 0.3);
+          border-radius: 0.5rem;
+          color: #4ade80;
+          text-decoration: none;
+          font-size: 0.875rem;
+          font-weight: 500;
+          transition: all 0.3s ease;
+        }
+
+        .footer-link:hover {
+          background: rgba(74, 222, 128, 0.2);
+          border-color: rgba(74, 222, 128, 0.5);
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
         }
 
         @media (max-width: 768px) {
