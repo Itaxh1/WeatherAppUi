@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Cloud, Wind, Droplets, Search, Navigation, Loader,
-  AlertCircle, X, Save, List, Plus, Trash2, Download, FileJson, FileText, FileDown, History, Edit2
+  AlertCircle, X, List, Plus, Trash2, FileJson, FileText, FileDown, History, Edit2
 } from 'lucide-react';
 import './WeatherApp.css';
 // --- API Configuration ---
@@ -474,26 +474,26 @@ const WeatherAppV2 = () => {
     const renderCurrentWeatherView = () => (
         <div className="weather-grid">
             <div className="grid-card current-weather-new">
-                <p className="location">{currentWeather.locationName}</p>
+                <p className="location">{currentWeather?.locationName}</p>
                 <p className="local-time-card">{localTime}</p>
                 <div className="current-main">
-                    <img src={`${ICON_URL}${currentWeather.icon}@4x.png`} alt={currentWeather.description} />
-                    <p className="temp">{Math.round(currentWeather.temp)}°C</p>
+                    <img src={`${ICON_URL}${currentWeather?.icon}@4x.png`} alt={currentWeather?.description} />
+                    <p className="temp">{Math.round(currentWeather?.temp || 0)}°C</p>
                 </div>
                 <div className="current-details">
-                    <p className="desc">{currentWeather.description}</p>
-                    <p>H: {Math.round(currentWeather.tempMax)}° / L: {Math.round(currentWeather.tempMin)}°</p>
+                    <p className="desc">{currentWeather?.description}</p>
+                    <p>H: {Math.round(currentWeather?.tempMax || 0)}° / L: {Math.round(currentWeather?.tempMin || 0)}°</p>
                 </div>
             </div>
             <div className="grid-card details-card">
                 <h3>Details</h3>
                 <div className="details-grid">
-                    <span><strong>Feels Like:</strong> {Math.round(currentWeather.feelsLike)}°</span>
-                    <span><strong>Humidity:</strong> {currentWeather.humidity}%</span>
-                    <span><strong>Wind:</strong> {currentWeather.windSpeed} m/s</span>
-                    <span><strong>Pressure:</strong> {currentWeather.pressure} hPa</span>
-                    <span><strong>Visibility:</strong> {currentWeather.visibility} km</span>
-                    <span><strong>AQI:</strong> {currentWeather.aqi}</span>
+                    <span><strong>Feels Like:</strong> {Math.round(currentWeather?.feelsLike || 0)}°</span>
+                    <span><strong>Humidity:</strong> {currentWeather?.humidity}%</span>
+                    <span><strong>Wind:</strong> {currentWeather?.windSpeed} m/s</span>
+                    <span><strong>Pressure:</strong> {currentWeather?.pressure} hPa</span>
+                    <span><strong>Visibility:</strong> {currentWeather?.visibility} km</span>
+                    <span><strong>AQI:</strong> {currentWeather?.aqi}</span>
                 </div>
             </div>
             <div className="grid-card daily-forecast">
@@ -513,7 +513,7 @@ const WeatherAppV2 = () => {
                 <ul>{recentSearches.map(s => (<li key={s.id} onClick={() => fetchWeatherByCoords(s.coords.lat, s.coords.lon, s.location)}><span>{s.location.split(',')[0]}</span></li>))}</ul>
             </div>
             <div className="grid-card weather-map small-map">
-                {GOOGLE_MAPS_API_KEY ? <iframe title="Google Map" loading="lazy" style={{ border: 0, borderRadius: '12px', width: '100%', height: '100%' }} src={`https://www.google.com/maps/embed/v1/place?key=${GOOGLE_MAPS_API_KEY}&q=${currentWeather.locationName}`}></iframe> : <div className="api-key-missing">Google Maps Key Missing</div>}
+                {GOOGLE_MAPS_API_KEY ? <iframe title="Google Map" loading="lazy" style={{ border: 0, borderRadius: '12px', width: '100%', height: '100%' }} src={`https://www.google.com/maps/embed/v1/place?key=${GOOGLE_MAPS_API_KEY}&q=${currentWeather?.locationName}`}></iframe> : <div className="api-key-missing">Google Maps Key Missing</div>}
             </div>
         </div>
         
