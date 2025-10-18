@@ -1,11 +1,12 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import WeatherApp from './components/WeatherApp.tsx'
 import 'bootstrap/dist/css/bootstrap.min.css'
 import './style.css'
+import WeatherAppV2 from './components/WeatherApp.tsx'
 
 ReactDOM.createRoot(document.getElementById('app') as HTMLElement).render(
   <React.StrictMode>
-    <WeatherApp />
+    {/* <WeatherApp /> */}
+    <WeatherAppV2/>
   </React.StrictMode>,
 )

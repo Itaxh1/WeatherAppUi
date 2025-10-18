@@ -1,1005 +1,616 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Cloud, MapPin, Wind, Droplets, Thermometer, Search,
-  Navigation, Loader, AlertCircle, Eye, Gauge, Sunrise, Sunset,
-  Linkedin, Globe
+  Cloud, Wind, Droplets, Search, Navigation, Loader,
+  AlertCircle, X, Save, List, Plus, Trash2, Download, FileJson, FileText, FileDown, History, Edit2
 } from 'lucide-react';
+import './WeatherApp.css';
+// --- API Configuration ---
+const OPENWEATHER_API_KEY = import.meta.env.VITE_OPENWEATHER_API_KEY;
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
-const API_KEY = import.meta.env.VITE_API_KEY;
+// +++ START: Supabase REST API Configuration +++
+const SUPABASE_URL = 'https://njmcreqgbfyvabcqojdz.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qbWNyZXFnYmZ5dmFiY3FvamR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1ODE4NzAsImV4cCI6MjA3NjE1Nzg3MH0.HzuZVVio9vIRjXtypCW5uAI2nDA5SBJjNF5EhqRDz1Y';
+const SUPABASE_API_BASE_URL = `${SUPABASE_URL}/rest/v1`;
+const TABLE_NAME = 'weather_requests';
+
+// Common headers for all Supabase requests
+const supabaseHeaders = {
+  'apikey': SUPABASE_ANON_KEY,
+  'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+  'Content-Type': 'application/json',
+};
+// +++ END: Supabase REST API Configuration +++
+
+// --- API Endpoints (Using Free Tier Compatible URLs) ---
 const GEO_URL = 'https://api.openweathermap.org/geo/1.0/direct';
 const WEATHER_URL = 'https://api.openweathermap.org/data/2.5/weather';
 const FORECAST_URL = 'https://api.openweathermap.org/data/2.5/forecast';
+const AIR_POLLUTION_URL = 'https://api.openweathermap.org/data/2.5/air_pollution';
 const ICON_URL = 'https://openweathermap.org/img/wn/';
 
-const WeatherApp = () => {
-  const [location, setLocation] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [currentWeather, setCurrentWeather] = useState(null);
-  const [forecastData, setForecastData] = useState([]);
-  const [selectedDay, setSelectedDay] = useState(null);
-  const [animate, setAnimate] = useState(false);
-  const [searchSuggestions, setSearchSuggestions] = useState([]);
+// --- TypeScript Interfaces ---
+interface CurrentWeather {
+    locationName: string; temp: number; feelsLike: number; tempMin: number;
+    tempMax: number; humidity: number; pressure: number; windSpeed: number;
+    visibility: number; description: string; icon: string; timezone: number; aqi: number;
+    coords: { lat: number; lon: number };
+}
+interface DailyForecast { date: string; maxTemp: number; minTemp: number; icon: string; }
+interface WeatherRequest {
+    id: string; location: { name: string; country: string; coordinates: { lat: number; lon: number } };
+    date_range: { start_date: string; end_date: string; }; requested_by: string;
+    weather_data?: {
+        date: string;
+        icon: string;
+        description: string;
+        temperature: { avg: number; max: number; min: number };
+        humidity: number;
+        windSpeed: number;
+    }[];
+}
+interface RecentSearch { id: string; location: string; coords: { lat: number; lon: number }; }
 
-  const fetchWeatherByCoords = async (lat, lon, locationName) => {
-    try {
-      const params = new URLSearchParams({
-        lat: lat.toString(),
-        lon: lon.toString(),
-        appid: API_KEY,
-        units: 'metric'
-      });
+// --- Main App Component ---
+const WeatherAppV2 = () => {
+    const [location, setLocation] = useState('New York');
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [success, setSuccess] = useState('');
+    const [currentView, setCurrentView] = useState<'current' | 'create' | 'list' | 'detail'>('current');
+    const [currentWeather, setCurrentWeather] = useState<CurrentWeather | null>(null);
+    const [dailyForecast, setDailyForecast] = useState<DailyForecast[]>([]);
+    const [localTime, setLocalTime] = useState('');
+    const [searchSuggestions, setSearchSuggestions] = useState<any[]>([]);
+    const [isFocused, setIsFocused] = useState(false);
+    const [weatherRequests, setWeatherRequests] = useState<WeatherRequest[]>([]);
+    const [selectedRequest, setSelectedRequest] = useState<WeatherRequest | null>(null);
+    const [crudLocation, setCrudLocation] = useState('');
+    const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+    const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+    const [requestedBy, setRequestedBy] = useState('');
+    const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([]);
+    const [editMode, setEditMode] = useState(false);
+    
+    useEffect(() => {
+        const saved = localStorage.getItem('weatherRecentSearches');
+        if (saved) setRecentSearches(JSON.parse(saved));
+        fetchWeatherByCoords(40.7128, -74.0060, 'New York, NY, US');
+    }, []);
 
-      const [weatherRes, forecastRes] = await Promise.all([
-        fetch(`${WEATHER_URL}?${params}`),
-        fetch(`${FORECAST_URL}?${params}`)
-      ]);
+    useEffect(() => {
+        if (!currentWeather) return;
+        const interval = setInterval(() => {
+            const date = new Date(Date.now() + currentWeather.timezone * 1000);
+            setLocalTime(date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' }));
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [currentWeather]);
 
-      if (!weatherRes.ok || !forecastRes.ok) {
-        throw new Error('Failed to fetch weather data');
-      }
+    const formatDate = (dateStr?: string, options?: Intl.DateTimeFormatOptions) => {
+        if (!dateStr) return 'N/A';
+        const defaultOptions: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' };
+        return new Date(dateStr).toLocaleDateString('en-US', { ...defaultOptions, ...options });
+    };
+    const Footer = () => (
+        <footer
+          className="app-footer"
+          style={{
 
-      const weather = await weatherRes.json();
-      const forecast = await forecastRes.json();
-
-      const weatherObj = {
-        locationName: locationName || `${weather.name}, ${weather.sys.country}`,
-        temp: weather.main.temp,
-        feelsLike: weather.main.feels_like,
-        tempMin: weather.main.temp_min,
-        tempMax: weather.main.temp_max,
-        humidity: weather.main.humidity,
-        pressure: weather.main.pressure,
-        windSpeed: weather.wind.speed,
-        visibility: weather.visibility / 1000,
-        description: weather.weather[0].description,
-        icon: weather.weather[0].icon,
-        sunrise: weather.sys.sunrise,
-        sunset: weather.sys.sunset,
-        isToday: true
-      };
-
-      setCurrentWeather(weatherObj);
-
-      const dailyForecasts = processForecast(forecast.list);
-      setForecastData(dailyForecasts);
-      setSelectedDay(null);
-      setError('');
-      setAnimate(true);
-      setTimeout(() => setAnimate(false), 600);
-    } catch (err) {
-      setError('Failed to fetch weather data. Please try again.');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const processForecast = (forecastList) => {
-    const daily = {};
-    const today = new Date().toDateString();
-
-    forecastList.forEach(item => {
-      const date = new Date(item.dt * 1000);
-      const dateStr = date.toDateString();
+            color: '#e6f0ea',
+            padding: '1.5rem 1rem',
+            textAlign: 'center',
+            marginTop: 'auto', // <-- key line (pushes footer to end)
+          }}
+        >
+          <p>Built using Supabase + OpenWeather + React</p>
+          <p>© {new Date().getFullYear()} | Crafted by Ashwin Kumar Uma Sankar</p>
       
-      if (dateStr === today) return;
-
-      if (!daily[dateStr]) {
-        daily[dateStr] = {
-          date: dateStr,
-          temps: [],
-          feelsLike: [],
-          humidity: [],
-          windSpeed: [],
-          visibility: [],
-          pressure: [],
-          icons: [],
-          descriptions: [],
-          timestamps: []
-        };
-      }
-
-      daily[dateStr].temps.push(item.main.temp);
-      daily[dateStr].feelsLike.push(item.main.feels_like);
-      daily[dateStr].humidity.push(item.main.humidity);
-      daily[dateStr].windSpeed.push(item.wind.speed);
-      daily[dateStr].visibility.push((item.visibility || 10000) / 1000);
-      daily[dateStr].pressure.push(item.main.pressure);
-      daily[dateStr].icons.push(item.weather[0].icon);
-      daily[dateStr].descriptions.push(item.weather[0].description);
-      daily[dateStr].timestamps.push(item.dt);
-    });
-
-    return Object.values(daily).slice(0, 5).map(day => {
-      const avgIdx = Math.floor(day.temps.length / 2);
-      return {
-        date: day.date,
-        temp: Math.round(day.temps[avgIdx]),
-        maxTemp: Math.round(Math.max(...day.temps)),
-        minTemp: Math.round(Math.min(...day.temps)),
-        feelsLike: Math.round(day.feelsLike[avgIdx]),
-        humidity: Math.round(day.humidity.reduce((a, b) => a + b) / day.humidity.length),
-        windSpeed: (day.windSpeed.reduce((a, b) => a + b) / day.windSpeed.length).toFixed(1),
-        visibility: Math.round(day.visibility.reduce((a, b) => a + b) / day.visibility.length),
-        pressure: Math.round(day.pressure.reduce((a, b) => a + b) / day.pressure.length),
-        icon: day.icons[avgIdx],
-        description: day.descriptions[avgIdx],
-        sunrise: day.timestamps[0],
-        sunset: day.timestamps[day.timestamps.length - 1]
-      };
-    });
-  };
-
-  const handleSearch = async () => {
-    if (!location.trim()) {
-      setError('Please enter a location');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-    setSearchSuggestions([]);
-
-    try {
-      const params = new URLSearchParams({
-        q: location.trim(),
-        limit: 5,
-        appid: API_KEY
-      });
-
-      const response = await fetch(`${GEO_URL}?${params}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to geocode location');
-      }
-
-      const data = await response.json();
-
-      if (!data || data.length === 0) {
-        throw new Error('Location not found. Please try a different search term.');
-      }
-
-      if (data.length === 1) {
-        const { lat, lon, name, country, state } = data[0];
-        const locationName = state 
-          ? `${name}, ${state}, ${country}`
-          : `${name}, ${country}`;
-        await fetchWeatherByCoords(lat, lon, locationName);
-      } else {
-        setSearchSuggestions(data);
-        setLoading(false);
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to find location');
-      setLoading(false);
-    }
-  };
-
-  const handleCurrentLocation = () => {
-    setLoading(true);
-    setError('');
-    setLocation('');
-
-    if (!navigator.geolocation) {
-      setError('Geolocation is not supported by your browser');
-      setLoading(false);
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        fetchWeatherByCoords(latitude, longitude, 'Your Location');
-      },
-      (err) => {
-        setError('Unable to retrieve your location. Please enable location services.');
-        setLoading(false);
-        console.error(err);
-      }
-    );
-  };
-
-  const handleDayClick = (day) => {
-    setSelectedDay(day);
-    setAnimate(true);
-    setTimeout(() => setAnimate(false), 600);
-  };
-
-  const handleSuggestionClick = async (suggestion) => {
-    const { lat, lon, name, country, state } = suggestion;
-    const locationName = state 
-      ? `${name}, ${state}, ${country}`
-      : `${name}, ${country}`;
-    setLocation(locationName);
-    setSearchSuggestions([]);
-    setLoading(true);
-    await fetchWeatherByCoords(lat, lon, locationName);
-  };
-
-  const formatTime = (timestamp) => {
-    return new Date(timestamp * 1000).toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
-
-  const formatDate = (dateStr) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric'
-    });
-  };
-
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter') {
-      handleSearch();
-    }
-  };
-
-  const displayWeather = selectedDay || currentWeather;
-
-  return (
-    <div className="weather-container">
-      <div className="weather-content">
-        {/* Header */}
-        <div className="header">
-          <div className="header-title">
-            <Cloud size={40} className="icon-primary" />
-            <h1>Weather Dashboard</h1>
-          </div>
-          <p className="header-subtitle">Real-time weather data powered by OpenWeather API</p>
-        </div>
-
-        {/* Search Section */}
-        <div className="search-card">
-          <div className="search-input-group">
-            <Search size={20} className="search-icon" />
-            <input
-              type="text"
-              className="search-input"
-              placeholder="Enter city, zip code, coordinates, or landmark..."
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              onKeyPress={handleKeyPress}
-              disabled={loading}
-            />
-          </div>
-          <div className="button-group">
-            <button
-              onClick={handleSearch}
-              disabled={loading}
-              className="btn btn-primary"
-            >
-              <Search size={18} />
-              {loading ? 'Searching...' : 'Get Weather'}
-            </button>
-            <button
-              onClick={handleCurrentLocation}
-              disabled={loading}
-              className="btn btn-secondary"
-            >
-              <Navigation size={18} />
-              Use My Location
-            </button>
-          </div>
-        </div>
-
-        {/* Loading State */}
-        {loading && (
-          <div className="loading-state">
-            <Loader className="loader-spin" size={48} />
-            <p>Fetching weather data...</p>
-          </div>
-        )}
-
-        {/* Error State */}
-        {error && !loading && (
-          <div className="error-alert">
-            <AlertCircle size={20} />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {/* Search Suggestions */}
-        {searchSuggestions.length > 0 && !loading && (
-          <div className="suggestions-card">
-            <h3>Multiple locations found. Please select one:</h3>
-            <div className="suggestions-list">
-              {searchSuggestions.map((suggestion, index) => (
-                <div 
-                  key={index}
-                  className="suggestion-item"
-                  onClick={() => handleSuggestionClick(suggestion)}
-                >
-                  <MapPin size={18} className="icon-primary" />
-                  <div className="suggestion-info">
-                    <div className="suggestion-name">
-                      {suggestion.name}
-                      {suggestion.state && `, ${suggestion.state}`}
-                    </div>
-                    <div className="suggestion-country">{suggestion.country}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Weather Data */}
-        {displayWeather && !loading && (
-          <>
-            {/* Current Weather */}
-            <div className={`weather-card ${animate ? 'animate-in' : ''}`}>
-              <div className="location-header">
-                <MapPin size={20} className="icon-primary" />
-                <h2>{currentWeather.locationName}</h2>
-                {selectedDay && (
-                  <button 
-                    className="back-btn"
-                    onClick={() => {
-                      setSelectedDay(null);
-                      setAnimate(true);
-                      setTimeout(() => setAnimate(false), 600);
-                    }}
-                  >
-                    ← Back to Today
-                  </button>
-                )}
-              </div>
-
-              {selectedDay && (
-                <div className="forecast-date">
-                  {formatDate(selectedDay.date)}
-                </div>
-              )}
-
-              <div className="weather-main">
-                <img
-                  src={`${ICON_URL}${displayWeather.icon}@4x.png`}
-                  alt={displayWeather.description}
-                  className="weather-icon"
-                />
-                <div className="temperature">
-                  {Math.round(displayWeather.temp)}°C
-                </div>
-                <p className="description">
-                  {displayWeather.description}
-                </p>
-                {!selectedDay && (
-                  <p className="temp-range">
-                    H: {Math.round(displayWeather.tempMax)}° L: {Math.round(displayWeather.tempMin)}°
-                  </p>
-                )}
-              </div>
-
-              {/* Weather Details Grid */}
-              <div className="details-grid">
-                <div className="detail-card">
-                  <Thermometer size={24} className="icon-primary" />
-                  <div className="detail-value">{Math.round(displayWeather.feelsLike)}°C</div>
-                  <div className="detail-label">Feels Like</div>
-                </div>
-                <div className="detail-card">
-                  <Droplets size={24} className="icon-primary" />
-                  <div className="detail-value">{displayWeather.humidity}%</div>
-                  <div className="detail-label">Humidity</div>
-                </div>
-                <div className="detail-card">
-                  <Wind size={24} className="icon-primary" />
-                  <div className="detail-value">{displayWeather.windSpeed} m/s</div>
-                  <div className="detail-label">Wind Speed</div>
-                </div>
-                <div className="detail-card">
-                  <Eye size={24} className="icon-primary" />
-                  <div className="detail-value">{displayWeather.visibility} km</div>
-                  <div className="detail-label">Visibility</div>
-                </div>
-                <div className="detail-card">
-                  <Gauge size={24} className="icon-primary" />
-                  <div className="detail-value">{displayWeather.pressure} hPa</div>
-                  <div className="detail-label">Pressure</div>
-                </div>
-                <div className="detail-card">
-                  <Sunrise size={24} className="icon-primary" />
-                  <div className="detail-value">{formatTime(displayWeather.sunrise)}</div>
-                  <div className="detail-label">Sunrise</div>
-                </div>
-                <div className="detail-card">
-                  <Sunset size={24} className="icon-primary" />
-                  <div className="detail-value">{formatTime(displayWeather.sunset)}</div>
-                  <div className="detail-label">Sunset</div>
-                </div>
-              </div>
-            </div>
-
-            {/* 5-Day Forecast */}
-            {forecastData.length > 0 && !selectedDay && (
-              <div className="forecast-card">
-                <h3>5-Day Forecast</h3>
-                <div className="forecast-grid">
-                  {forecastData.map((day, index) => (
-                    <div 
-                      key={index} 
-                      className="forecast-item"
-                      onClick={() => handleDayClick(day)}
-                    >
-                      <div className="forecast-date-small">
-                        {formatDate(day.date)}
-                      </div>
-                      <img
-                        src={`${ICON_URL}${day.icon}@2x.png`}
-                        alt={day.description}
-                        className="forecast-icon"
-                      />
-                      <div className="forecast-temp">
-                        {day.maxTemp}° / {day.minTemp}°
-                      </div>
-                      <div className="forecast-desc">
-                        {day.description}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Initial State */}
-        {!currentWeather && !loading && !error && searchSuggestions.length === 0 && (
-          <div className="empty-state">
-            <Cloud size={64} className="empty-icon" />
-            <h3>Search for a location to get started</h3>
-            <p>Try searching for a city, zip code, or use your current location</p>
-          </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <footer className="footer">
-        <div className="footer-content">
-          <p className="footer-text">
-            Built by <strong>Ashwin Kumar Uma Sankar</strong>
-          </p>
-          <div className="footer-links">
-            <a 
-              href="https://www.ashxinkumar.me/" 
-              target="_blank" 
+          <div
+            style={{
+              marginTop: '0.8rem',
+              display: 'flex',
+              justifyContent: 'center',
+              gap: '1rem',
+            }}
+          >
+            <a
+              href="https://www.linkedin.com/in/ashwinkumar99"
+              target="_blank"
               rel="noopener noreferrer"
-              className="footer-link"
+              style={{
+                textDecoration: 'none',
+                // backgroundColor: '#16a34a',
+                color: '#e6f0ea',
+                padding: '0.5rem 1rem',
+                borderRadius: '8px',
+                transition: 'all 0.3s ease',
+              }}
+              onMouseOver={e => (e.currentTarget.style.backgroundColor = '#22c55e')}
+              onMouseOut={e => (e.currentTarget.style.backgroundColor = '')}
             >
-              <Globe size={18} />
-              Portfolio
-            </a>
-            <a 
-              href="https://www.linkedin.com/in/ashwinkumar99/" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="footer-link"
-            >
-              <Linkedin size={18} />
               LinkedIn
             </a>
+      
+            <a
+              href="https://www.ashxinkumar.me/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                textDecoration: 'none',
+                // backgroundColor: '#15803d',
+                color: '#e6f0ea',
+                padding: '0.5rem 1rem',
+                borderRadius: '8px',
+                transition: 'all 0.3s ease',
+              }}
+              onMouseOver={e => (e.currentTarget.style.backgroundColor = '#22c55e')}
+              onMouseOut={e => (e.currentTarget.style.backgroundColor = '')}
+            >
+              Portfolio
+            </a>
           </div>
+        </footer>
+      );
+      
+      
+      
+
+    const fetchWeatherByCoords = async (lat: number, lon: number, locationName: string) => {
+        setLoading(true); setError(''); setSuccess('');
+        setLocation(locationName.split(',')[0]);
+        setIsFocused(false); setSearchSuggestions([]);
+
+        if (!OPENWEATHER_API_KEY) {
+            setError("OpenWeather API Key is missing."); setLoading(false); return;
+        }
+
+        try {
+            const params = new URLSearchParams({ lat: String(lat), lon: String(lon), appid: OPENWEATHER_API_KEY, units: 'metric' });
+            
+            const [weatherRes, forecastRes, airRes] = await Promise.all([
+                fetch(`${WEATHER_URL}?${params}`),
+                fetch(`${FORECAST_URL}?${params}`),
+                fetch(`${AIR_POLLUTION_URL}?${params}`)
+            ]);
+            if (!weatherRes.ok || !forecastRes.ok || !airRes.ok) throw new Error('API Error: Could not fetch weather data. Please check your API key.');
+
+            const weather = await weatherRes.json();
+            const forecast = await forecastRes.json();
+            const air = await airRes.json();
+            
+            setDailyForecast(processDailyForecast(forecast.list, weather.timezone));
+            setCurrentWeather({
+                locationName, temp: weather.main.temp, feelsLike: weather.main.feels_like,
+                tempMin: weather.main.temp_min, tempMax: weather.main.temp_max,
+                humidity: weather.main.humidity, pressure: weather.main.pressure, windSpeed: weather.wind.speed,
+                visibility: weather.visibility / 1000, description: weather.weather[0].description,
+                icon: weather.weather[0].icon, timezone: weather.timezone,
+                aqi: air.list[0].main.aqi, coords: { lat, lon },
+            });
+            saveRecentSearch(locationName, { lat, lon });
+        } catch (err: any) {
+            setError(err.message || 'An unexpected error occurred.'); setCurrentWeather(null);
+        } finally {
+            setLoading(false);
+        }
+    };
+    
+    const saveRecentSearch = (name: string, coords: { lat: number; lon: number }) => {
+        const newSearch = { id: Date.now().toString(), location: name, coords };
+        const updated = [newSearch, ...recentSearches.filter(s => s.location !== name)].slice(0, 3);
+        setRecentSearches(updated);
+        localStorage.setItem('weatherRecentSearches', JSON.stringify(updated));
+    };
+
+    const processDailyForecast = (list: any[], tz: number): DailyForecast[] => {
+        const dailyData: { [key: string]: { temps: number[], icons: { [key: string]: number } } } = {};
+        list.forEach(item => {
+            const day = new Date((item.dt + tz) * 1000).toISOString().split('T')[0];
+            if (!dailyData[day]) dailyData[day] = { temps: [], icons: {} };
+            dailyData[day].temps.push(item.main.temp);
+            const icon = item.weather[0].icon;
+            dailyData[day].icons[icon] = (dailyData[day].icons[icon] || 0) + 1;
+        });
+        return Object.keys(dailyData).slice(0, 5).map(date => {
+            const day = dailyData[date];
+            const dominantIcon = Object.keys(day.icons).reduce((a, b) => day.icons[a] > day.icons[b] ? a : b);
+            return { date, maxTemp: Math.round(Math.max(...day.temps)), minTemp: Math.round(Math.min(...day.temps)), icon: dominantIcon };
+        });
+    };
+
+    const handleSearch = async (query: string) => {
+        if (query.trim()) {
+            const res = await fetch(`${GEO_URL}?q=${query.trim()}&limit=5&appid=${OPENWEATHER_API_KEY}`);
+            if (res.ok) setSearchSuggestions(await res.json());
+        } else { setSearchSuggestions([]); }
+    };
+    
+    const handleSuggestionClick = (suggestion: any) => {
+        const { lat, lon, name, country, state } = suggestion;
+        fetchWeatherByCoords(lat, lon, `${name}, ${state ? `${state}, ` : ''}${country}`);
+    };
+
+    // --- NEW HELPER FUNCTION TO FETCH AND FORMAT WEATHER DATA ---
+    const fetchAndFormatWeatherData = async (locationName: string, start: string, end: string) => {
+        // 1. Geocode location to get coordinates
+        const geoRes = await fetch(`${GEO_URL}?q=${locationName}&limit=1&appid=${OPENWEATHER_API_KEY}`);
+        if (!geoRes.ok) throw new Error('Failed to geocode location.');
+        const geoData = await geoRes.json();
+        if (geoData.length === 0) throw new Error(`Location "${locationName}" not found.`);
+        const { lat, lon } = geoData[0];
+
+        // 2. Fetch current weather data for the coordinates
+        // Note: Free OpenWeatherMap API doesn't support date range historical data easily.
+        // This mimics the backend logic by using current weather for each day in the range.
+        const weatherRes = await fetch(`${WEATHER_URL}?lat=${lat}&lon=${lon}&appid=${OPENWEATHER_API_KEY}&units=metric`);
+        if (!weatherRes.ok) throw new Error('Failed to fetch weather data.');
+        const current = await weatherRes.json();
+        
+        // 3. Format data for each day in the date range
+        const formattedData = [];
+        let currentDate = new Date(new Date(start).toUTCString());
+        const endDateObj = new Date(new Date(end).toUTCString());
+
+        while (currentDate <= endDateObj) {
+            formattedData.push({
+                date: currentDate.toISOString().split('T')[0],
+                temperature: {
+                    avg: current.main.temp,
+                    min: current.main.temp_min,
+                    max: current.main.temp_max,
+                },
+                humidity: current.main.humidity,
+                windSpeed: current.wind.speed,
+                description: current.weather[0].description,
+                icon: current.weather[0].icon,
+            });
+            currentDate.setDate(currentDate.getDate() + 1);
+        }
+        return formattedData;
+    };
+
+
+    const fetchWeatherRequests = async () => {
+        setLoading(true); setError('');
+        try {
+            const res = await fetch(`${SUPABASE_API_BASE_URL}/${TABLE_NAME}?select=*&order=created_at.desc`, {
+                method: 'GET',
+                headers: supabaseHeaders,
+            });
+            if (!res.ok) { const err = await res.json(); throw new Error(err.message || 'Failed to fetch data.'); }
+            
+            const data = await res.json();
+            
+            const formattedData = data.map((req: any) => ({
+                id: req.id,
+                location: { name: req.location_name, country: '', coordinates: { lat: 0, lon: 0 } },
+                date_range: { start_date: req.start_date, end_date: req.end_date },
+                requested_by: req.requested_by,
+                weather_data: req.weather_data || [],
+            }));
+            
+            setWeatherRequests(formattedData);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // --- UPDATED CREATE FUNCTION ---
+    const handleCreateRequest = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoading(true); setError(''); setSuccess('');
+        
+        const locationToSave = crudLocation || currentWeather?.locationName;
+        if (!locationToSave) {
+            setError("Location is required.");
+            setLoading(false);
+            return;
+        }
+
+        try {
+            const weatherData = await fetchAndFormatWeatherData(locationToSave, startDate, endDate);
+
+            const requestBody = {
+                location_name: locationToSave,
+                start_date: startDate,
+                end_date: endDate,
+                requested_by: requestedBy || 'Anonymous',
+                weather_data: weatherData,
+            };
+
+            const res = await fetch(`${SUPABASE_API_BASE_URL}/${TABLE_NAME}`, {
+                method: 'POST',
+                headers: { ...supabaseHeaders, 'Prefer': 'return=minimal' },
+                body: JSON.stringify(requestBody),
+            });
+
+            if (!res.ok) { const err = await res.json(); throw new Error(err.message || 'Failed to create request.'); }
+            
+            setSuccess('Request created successfully!');
+            fetchWeatherRequests();
+            setCurrentView('list');
+            
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // --- UPDATED UPDATE FUNCTION ---
+    const handleUpdateRequest = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedRequest) return;
+        setLoading(true); setError(''); setSuccess('');
+
+        try {
+            const weatherData = await fetchAndFormatWeatherData(crudLocation, startDate, endDate);
+
+            const updatedData = {
+                location_name: crudLocation,
+                start_date: startDate,
+                end_date: endDate,
+                requested_by: requestedBy,
+                weather_data: weatherData,
+            };
+
+            const res = await fetch(`${SUPABASE_API_BASE_URL}/${TABLE_NAME}?id=eq.${selectedRequest.id}`, {
+                method: 'PATCH',
+                headers: { ...supabaseHeaders, 'Prefer': 'return=representation' },
+                body: JSON.stringify(updatedData),
+            });
+            
+            if (!res.ok) { const err = await res.json(); throw new Error(err.message || 'Failed to update request.'); }
+            
+            const data = (await res.json())[0];
+            
+            const formattedData = {
+                id: data.id,
+                location: { name: data.location_name, country: '', coordinates: { lat: 0, lon: 0 } },
+                date_range: { start_date: data.start_date, end_date: data.end_date },
+                requested_by: data.requested_by,
+                weather_data: data.weather_data || [],
+            };
+
+            setSelectedRequest(formattedData);
+            setSuccess('Request updated successfully!');
+            setEditMode(false);
+            fetchWeatherRequests();
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleDeleteRequest = async (id: string) => {
+        // The window.confirm dialog can be unreliable in some environments.
+        // Forcing the delete action to ensure it works as requested.
+        setLoading(true); setError(''); setSuccess('');
+
+        try {
+            const res = await fetch(`${SUPABASE_API_BASE_URL}/${TABLE_NAME}?id=eq.${id}`, {
+                method: 'DELETE',
+                headers: supabaseHeaders,
+            });
+
+            if (!res.ok) { 
+                // Try to parse error from Supabase
+                try {
+                    const err = await res.json();
+                    throw new Error(err.message || 'Failed to delete request.');
+                } catch {
+                    throw new Error('Failed to delete request.');
+                }
+            }
+
+            setSuccess('Request deleted.');
+            setCurrentView('list');
+            await fetchWeatherRequests(); // Refetch the list to ensure UI is in sync
+
+        } catch (err: any) {
+            setError(err.message);
+            setLoading(false); // Manually set loading to false on error
+        }
+        // The finally block in fetchWeatherRequests will set loading to false on success
+    };
+    
+    const handleExport = async (format: string) => {
+        if (!selectedRequest) {
+            setError('No request selected for export.');
+            return;
+        }
+
+        if (format.toLowerCase() !== 'json') {
+            setError(`Exporting to ${format.toUpperCase()} requires a server-side component. Only JSON export is supported.`);
+            return;
+        }
+
+        setLoading(true); setError(''); setSuccess('');
+        try {
+            const res = await fetch(`${SUPABASE_API_BASE_URL}/${TABLE_NAME}?id=eq.${selectedRequest.id}&select=*`, {
+                method: 'GET',
+                headers: supabaseHeaders,
+            });
+
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.message || 'Failed to fetch data for export.');
+            }
+            
+            const data = (await res.json())[0];
+            if (!data) throw new Error('Could not find the selected request.');
+
+            const jsonString = JSON.stringify(data, null, 2);
+            const blob = new Blob([jsonString], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `weather-request-${selectedRequest.id}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            setSuccess('JSON file exported successfully!');
+
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleMyLocation = () => {
+        navigator.geolocation.getCurrentPosition(p => 
+            fetchWeatherByCoords(p.coords.latitude, p.coords.longitude, 'Your Location')
+        );
+    };
+    
+    const renderCurrentWeatherView = () => (
+        <div className="weather-grid">
+            <div className="grid-card current-weather-new">
+                <p className="location">{currentWeather.locationName}</p>
+                <p className="local-time-card">{localTime}</p>
+                <div className="current-main">
+                    <img src={`${ICON_URL}${currentWeather.icon}@4x.png`} alt={currentWeather.description} />
+                    <p className="temp">{Math.round(currentWeather.temp)}°C</p>
+                </div>
+                <div className="current-details">
+                    <p className="desc">{currentWeather.description}</p>
+                    <p>H: {Math.round(currentWeather.tempMax)}° / L: {Math.round(currentWeather.tempMin)}°</p>
+                </div>
+            </div>
+            <div className="grid-card details-card">
+                <h3>Details</h3>
+                <div className="details-grid">
+                    <span><strong>Feels Like:</strong> {Math.round(currentWeather.feelsLike)}°</span>
+                    <span><strong>Humidity:</strong> {currentWeather.humidity}%</span>
+                    <span><strong>Wind:</strong> {currentWeather.windSpeed} m/s</span>
+                    <span><strong>Pressure:</strong> {currentWeather.pressure} hPa</span>
+                    <span><strong>Visibility:</strong> {currentWeather.visibility} km</span>
+                    <span><strong>AQI:</strong> {currentWeather.aqi}</span>
+                </div>
+            </div>
+            <div className="grid-card daily-forecast">
+                <h3>5-Day Forecast</h3>
+                <div className="daily-forecast-container">
+                    {dailyForecast.map((day) => (
+                        <div key={day.date} className="day-card">
+                            <p className="day-name">{new Date(day.date).toLocaleDateString('en-US',{weekday:'short', timeZone:'UTC'})}</p>
+                            <img src={`${ICON_URL}${day.icon}@2x.png`} alt="" />
+                            <p className="day-temps"><strong>{day.maxTemp}°</strong> / {day.minTemp}°</p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+            <div className="grid-card recent-searches-card">
+                <h3><History size={16}/> Recent Searches</h3>
+                <ul>{recentSearches.map(s => (<li key={s.id} onClick={() => fetchWeatherByCoords(s.coords.lat, s.coords.lon, s.location)}><span>{s.location.split(',')[0]}</span></li>))}</ul>
+            </div>
+            <div className="grid-card weather-map small-map">
+                {GOOGLE_MAPS_API_KEY ? <iframe title="Google Map" loading="lazy" style={{ border: 0, borderRadius: '12px', width: '100%', height: '100%' }} src={`https://www.google.com/maps/embed/v1/place?key=${GOOGLE_MAPS_API_KEY}&q=${currentWeather.locationName}`}></iframe> : <div className="api-key-missing">Google Maps Key Missing</div>}
+            </div>
         </div>
-      </footer>
-
-      <style>{`
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-
-        .weather-container {
-          min-height: 100vh;
-          background: black;
-          padding: 2rem 1rem;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-          color: #e8f5e9;
-        }
-
-        .weather-content {
-          max-width: 900px;
-          margin: 0 auto;
-        }
-
-        .header {
-          text-align: center;
-          margin-bottom: 2rem;
-        }
-
-        .header-title {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 0.75rem;
-          margin-bottom: 0.5rem;
-        }
-
-        .header-title h1 {
-          font-size: 2rem;
-          font-weight: 700;
-          color: #4ade80;
-        }
-
-        .header-subtitle {
-          color: #86efac;
-          font-size: 0.875rem;
-        }
-
-        .icon-primary {
-          color: #4ade80;
-        }
-
-        .search-card {
-          background: rgba(26, 61, 46, 0.6);
-          backdrop-filter: blur(10px);
-          border: 1px solid rgba(74, 222, 128, 0.2);
-          border-radius: 1rem;
-          padding: 1.5rem;
-          margin-bottom: 2rem;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-        }
-
-        .search-input-group {
-          position: relative;
-          margin-bottom: 1rem;
-        }
-
-        .search-icon {
-          position: absolute;
-          left: 1rem;
-          top: 50%;
-          transform: translateY(-50%);
-          color: #4ade80;
-        }
-
-        .search-input {
-          width: 100%;
-          padding: 0.875rem 1rem 0.875rem 3rem;
-          background: rgba(10, 31, 15, 0.5);
-          border: 1px solid rgba(74, 222, 128, 0.3);
-          border-radius: 0.5rem;
-          color: #e8f5e9;
-          font-size: 1rem;
-          transition: all 0.3s ease;
-        }
-
-        .search-input:focus {
-          outline: none;
-          border-color: #4ade80;
-          box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.1);
-        }
-
-        .search-input::placeholder {
-          color: #86efac;
-          opacity: 0.5;
-        }
-
-        .button-group {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 0.75rem;
-        }
-
-        .btn {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 0.5rem;
-          padding: 0.875rem 1.5rem;
-          border: none;
-          border-radius: 0.5rem;
-          font-size: 1rem;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.3s ease;
-        }
-
-        .btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .btn-primary {
-          background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-          color: white;
-        }
-
-        .btn-primary:hover:not(:disabled) {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 16px rgba(34, 197, 94, 0.3);
-        }
-
-        .btn-secondary {
-          background: rgba(74, 222, 128, 0.1);
-          border: 1px solid rgba(74, 222, 128, 0.3);
-          color: #4ade80;
-        }
-
-        .btn-secondary:hover:not(:disabled) {
-          background: rgba(74, 222, 128, 0.2);
-          transform: translateY(-2px);
-        }
-
-        .loading-state {
-          text-align: center;
-          padding: 4rem 0;
-        }
-
-        .loader-spin {
-          color: #4ade80;
-          animation: spin 1s linear infinite;
-          margin-bottom: 1rem;
-        }
-
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-
-        .error-alert {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          padding: 1rem 1.5rem;
-          background: rgba(220, 38, 38, 0.1);
-          border: 1px solid rgba(220, 38, 38, 0.3);
-          border-radius: 0.5rem;
-          color: #fca5a5;
-          margin-bottom: 2rem;
-        }
-
-        .weather-card {
-          background: rgba(26, 61, 46, 0.6);
-          backdrop-filter: blur(10px);
-          border: 1px solid rgba(74, 222, 128, 0.2);
-          border-radius: 1rem;
-          padding: 2rem;
-          margin-bottom: 2rem;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-        }
-
-        .animate-in {
-          animation: fadeInUp 0.6s ease;
-        }
-
-        @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        .location-header {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          margin-bottom: 1.5rem;
-          flex-wrap: wrap;
-        }
-
-        .location-header h2 {
-          font-size: 1.5rem;
-          font-weight: 600;
-          color: #4ade80;
-          flex: 1;
-        }
-
-        .back-btn {
-          padding: 0.5rem 1rem;
-          background: rgba(74, 222, 128, 0.1);
-          border: 1px solid rgba(74, 222, 128, 0.3);
-          border-radius: 0.5rem;
-          color: #4ade80;
-          font-size: 0.875rem;
-          cursor: pointer;
-          transition: all 0.3s ease;
-        }
-
-        .back-btn:hover {
-          background: rgba(74, 222, 128, 0.2);
-          transform: translateX(-2px);
-        }
-
-        .forecast-date {
-          font-size: 1.125rem;
-          color: #86efac;
-          margin-bottom: 1rem;
-          font-weight: 500;
-        }
-
-        .weather-main {
-          text-align: center;
-          padding: 2rem 0;
-        }
-
-        .weather-icon {
-          width: 120px;
-          height: 120px;
-          filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
-        }
-
-        .temperature {
-          font-size: 4rem;
-          font-weight: 700;
-          color: #4ade80;
-          margin: 0.5rem 0;
-        }
-
-        .description {
-          font-size: 1.25rem;
-          color: #86efac;
-          text-transform: capitalize;
-          margin-bottom: 0.5rem;
-        }
-
-        .temp-range {
-          color: #86efac;
-          opacity: 0.7;
-        }
-
-        .details-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-          gap: 1rem;
-          margin-top: 2rem;
-        }
-
-        .detail-card {
-          background: rgba(10, 31, 15, 0.5);
-          border: 1px solid rgba(74, 222, 128, 0.2);
-          border-radius: 0.75rem;
-          padding: 1.25rem;
-          text-align: center;
-          transition: all 0.3s ease;
-        }
-
-        .detail-card:hover {
-          transform: translateY(-4px);
-          border-color: rgba(74, 222, 128, 0.4);
-          box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
-        }
-
-        .detail-value {
-          font-size: 1.25rem;
-          font-weight: 700;
-          color: #e8f5e9;
-          margin: 0.75rem 0 0.5rem;
-        }
-
-        .detail-label {
-          font-size: 0.875rem;
-          color: #86efac;
-          opacity: 0.8;
-        }
-
-        .forecast-card {
-          background: rgba(26, 61, 46, 0.6);
-          backdrop-filter: blur(10px);
-          border: 1px solid rgba(74, 222, 128, 0.2);
-          border-radius: 1rem;
-          padding: 2rem;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-        }
-
-        .forecast-card h3 {
-          font-size: 1.25rem;
-          color: #4ade80;
-          margin-bottom: 1.5rem;
-        }
-
-        .forecast-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-          gap: 1rem;
-        }
-
-        .forecast-item {
-          background: rgba(10, 31, 15, 0.5);
-          border: 1px solid rgba(74, 222, 128, 0.2);
-          border-radius: 0.75rem;
-          padding: 1.25rem;
-          text-align: center;
-          cursor: pointer;
-          transition: all 0.3s ease;
-        }
-
-        .forecast-item:hover {
-          transform: translateY(-4px);
-          border-color: rgba(74, 222, 128, 0.4);
-          box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
-        }
-
-        .forecast-date-small {
-          font-size: 0.875rem;
-          font-weight: 600;
-          color: #4ade80;
-          margin-bottom: 0.75rem;
-        }
-
-        .forecast-icon {
-          width: 50px;
-          height: 50px;
-          margin: 0.5rem 0;
-        }
-
-        .forecast-temp {
-          font-size: 1rem;
-          font-weight: 700;
-          color: #e8f5e9;
-          margin: 0.75rem 0 0.5rem;
-        }
-
-        .forecast-desc {
-          font-size: 0.75rem;
-          color: #86efac;
-          text-transform: capitalize;
-          opacity: 0.8;
-        }
-
-        .empty-state {
-          text-align: center;
-          padding: 5rem 0;
-        }
-
-        .empty-icon {
-          color: #86efac;
-          opacity: 0.5;
-          margin-bottom: 1.5rem;
-        }
-
-        .empty-state h3 {
-          font-size: 1.25rem;
-          color: #4ade80;
-          margin-bottom: 0.75rem;
-        }
-
-        .empty-state p {
-          color: #86efac;
-          opacity: 0.7;
-        }
-
-        .suggestions-card {
-          background: rgba(26, 61, 46, 0.6);
-          backdrop-filter: blur(10px);
-          border: 1px solid rgba(74, 222, 128, 0.2);
-          border-radius: 1rem;
-          padding: 1.5rem;
-          margin-bottom: 2rem;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-        }
-
-        .suggestions-card h3 {
-          color: #4ade80;
-          font-size: 1rem;
-          margin-bottom: 1rem;
-        }
-
-        .suggestions-list {
-          display: flex;
-          flex-direction: column;
-          gap: 0.75rem;
-        }
-
-        .suggestion-item {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          padding: 1rem;
-          background: rgba(10, 31, 15, 0.5);
-          border: 1px solid rgba(74, 222, 128, 0.2);
-          border-radius: 0.5rem;
-          cursor: pointer;
-          transition: all 0.3s ease;
-        }
-
-        .suggestion-item:hover {
-          background: rgba(10, 31, 15, 0.7);
-          border-color: rgba(74, 222, 128, 0.4);
-          transform: translateX(4px);
-        }
-
-        .suggestion-info {
-          flex: 1;
-        }
-
-        .suggestion-name {
-          color: #e8f5e9;
-          font-weight: 500;
-          margin-bottom: 0.25rem;
-        }
-
-        .suggestion-country {
-          color: #86efac;
-          font-size: 0.875rem;
-          opacity: 0.8;
-        }
-
-        .footer {
-          margin-top: 4rem;
-          padding-top: 2rem;
-          border-top: 1px solid rgba(74, 222, 128, 0.2);
-        }
-
-        .footer-content {
-          max-width: 900px;
-          margin: 0 auto;
-          text-align: center;
-        }
-
-        .footer-text {
-          color: #86efac;
-          margin-bottom: 1rem;
-          font-size: 0.875rem;
-        }
-
-        .footer-text strong {
-          color: #4ade80;
-        }
-
-        .footer-links {
-          display: flex;
-          justify-content: center;
-          gap: 1.5rem;
-          flex-wrap: wrap;
-        }
-
-        .footer-link {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          padding: 0.5rem 1rem;
-          background: rgba(74, 222, 128, 0.1);
-          border: 1px solid rgba(74, 222, 128, 0.3);
-          border-radius: 0.5rem;
-          color: #4ade80;
-          text-decoration: none;
-          font-size: 0.875rem;
-          font-weight: 500;
-          transition: all 0.3s ease;
-        }
-
-        .footer-link:hover {
-          background: rgba(74, 222, 128, 0.2);
-          border-color: rgba(74, 222, 128, 0.5);
-          transform: translateY(-2px);
-          box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-        }
-
-        @media (max-width: 768px) {
-          .header-title h1 {
-            font-size: 1.5rem;
-          }
-
-          .temperature {
-            font-size: 3rem;
-          }
-
-          .details-grid {
-            grid-template-columns: repeat(2, 1fr);
-          }
-
-          .forecast-grid {
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-          }
-
-          .button-group {
-            grid-template-columns: 1fr;
-          }
-        }
-      `}</style>
-    </div>
-  );
+        
+    );
+    const renderCreateView = () => <div className="form-view"><h2>Create Weather Request</h2><form onSubmit={handleCreateRequest} className="form-card"><input type="text" placeholder="Location (e.g., New York, US)" defaultValue={currentWeather?.locationName || ''} onChange={e => setCrudLocation(e.target.value)} /><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} required /><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} required /><input type="text" placeholder="Your Name (Optional)" value={requestedBy} onChange={e => setRequestedBy(e.target.value)} /><button type="submit" className="btn" disabled={loading}>{loading ? 'Saving...' : 'Save Request'}</button></form></div>;
+    const renderListView = () => <div className="list-view"><h2>Saved Requests</h2><div className="requests-container">{weatherRequests.length > 0 ? weatherRequests.map(req => (<div key={req.id} className="request-item" onClick={() => { setSelectedRequest(req); setCurrentView('detail'); }}><h4>{req.location.name}</h4><p>{formatDate(req.date_range.start_date)} to {formatDate(req.date_range.end_date)}</p></div>)) : <p>No saved requests found.</p>}</div></div>;
+    const renderDetailView = () => selectedRequest && (
+        <div className="detail-view">
+            <button className="btn back-btn" onClick={() => { setCurrentView('list'); setEditMode(false); }}>← Back to List</button>
+            
+            {editMode ? (
+                <form onSubmit={handleUpdateRequest} className="form-card edit-form">
+                    <h3>Editing Request</h3>
+                    <input type="text" defaultValue={selectedRequest.location.name} onChange={e => setCrudLocation(e.target.value)} />
+                    <input type="date" defaultValue={selectedRequest.date_range.start_date.split('T')[0]} onChange={e => setStartDate(e.target.value)} />
+                    <input type="date" defaultValue={selectedRequest.date_range.end_date.split('T')[0]} onChange={e => setEndDate(e.target.value)} />
+                    <input type="text" defaultValue={selectedRequest.requested_by} onChange={e => setRequestedBy(e.target.value)} />
+                    <div className="edit-actions">
+                        <button type="button" className="btn cancel-btn" onClick={() => setEditMode(false)}>Cancel</button>
+                        <button type="submit" className="btn" disabled={loading}>{loading ? 'Saving...' : 'Save Changes'}</button>
+                    </div>
+                </form>
+            ) : (
+                <>
+                    <div className="detail-header">
+                        <h2>{selectedRequest.location.name}</h2>
+                        <p>{formatDate(selectedRequest.date_range.start_date)} - {formatDate(selectedRequest.date_range.end_date)}</p>
+                    </div>
+                    <div className="export-options">
+                        <button onClick={() => {
+                            setEditMode(true);
+                            setCrudLocation(selectedRequest.location.name);
+                            setStartDate(selectedRequest.date_range.start_date.split('T')[0]);
+                            setEndDate(selectedRequest.date_range.end_date.split('T')[0]);
+                            setRequestedBy(selectedRequest.requested_by);
+                        }}><Edit2 size={16}/> Edit</button>
+                        <button onClick={() => handleExport('json')}><FileJson size={16}/>JSON</button>
+                        <button onClick={() => handleExport('csv')}><FileText size={16}/>CSV</button>
+                        <button onClick={() => handleExport('pdf')}><FileDown size={16}/>PDF</button>
+                        <button className="btn delete-btn" onClick={() => handleDeleteRequest(selectedRequest.id)}><Trash2 size={16}/>Delete</button>
+                    </div>
+                </>
+            )}
+
+            <div className="saved-data-grid">
+                {selectedRequest.weather_data && selectedRequest.weather_data.length > 0 ? (
+                    selectedRequest.weather_data.map(day => (
+                        <div key={day.date} className="saved-day-card">
+                            <p className="saved-day-date">{formatDate(day.date, { weekday: 'long' })}</p>
+                            <img src={`${ICON_URL}${day.icon}@2x.png`} alt={day.description} />
+                            <p className="saved-day-temp">{Math.round(day.temperature.avg)}°C</p>
+                            <p className="saved-day-range">{day.temperature.max}° / {day.temperature.min}°</p>
+                            <p className="saved-day-desc">{day.description}</p>
+                            <div className="saved-day-details">
+                                <span><Droplets size={14} /> {day.humidity}%</span>
+                                <span><Wind size={14} /> {day.windSpeed} m/s</span>
+                            </div>
+                        </div>
+                    ))
+                ) : <p>No detailed weather data found for this request.</p>}
+            </div>
+        </div>
+    );
+
+    if (loading && !currentWeather) return <div className="full-screen-loader"><Loader className="loader-spin" size={64} /></div>;
+
+    return (
+        <div className="weather-container">
+            <aside className="sidebar">
+                <Cloud size={28} onClick={() => setCurrentView('current')} style={{cursor:'pointer'}} />
+            </aside>
+            <main className="main-content">
+                <header className="main-header">
+                     <div className="search-wrapper">
+                        <Search size={20} className="search-icon" />
+                        <input type="text" value={location} onChange={e => { setLocation(e.target.value); handleSearch(e.target.value); }} onFocus={() => setIsFocused(true)} onBlur={() => setTimeout(() => setIsFocused(false), 200)} placeholder="Search for city..." className="search-input" />
+                        <button className="location-btn" onClick={handleMyLocation}><Navigation size={20} /></button>
+                        {isFocused && searchSuggestions.length > 0 && (
+                            <div className="suggestions-box">{searchSuggestions.map((s, i) => (<div key={i} className="suggestion-item" onClick={() => handleSuggestionClick(s)}>{s.name}, {s.state ? `${s.state}, ` : ''}{s.country}</div>))}</div>
+                        )}
+                    </div>
+                    <div className="header-actions">
+                        <div className="view-switcher"><button onClick={() => setCurrentView('current')} className={currentView === 'current' ? 'active' : ''}><Cloud size={16}/> Dashboard</button><button onClick={() => setCurrentView('create')} className={currentView === 'create' ? 'active' : ''}><Plus size={16}/> Create</button><button onClick={() => { setCurrentView('list'); fetchWeatherRequests(); }} className={currentView === 'list' ? 'active' : ''}><List size={16}/> View Saved</button></div>
+                    </div>
+                </header>
+                {error && <div className="alert-error"><AlertCircle size={20} /> {error} <X size={20} onClick={() => setError('')}/></div>}
+                {success && <div className="alert-success">✓ {success} <X size={20} onClick={() => setSuccess('')}/></div>}
+                {currentView === 'current' && currentWeather && renderCurrentWeatherView()}
+                {currentView === 'create' && renderCreateView()}
+                {currentView === 'list' && renderListView()}
+                {currentView === 'detail' && renderDetailView()}
+                <Footer />
+            </main>
+       
+        </div>
+    );
 };
 
-export default WeatherApp;
+export default WeatherAppV2;
+
